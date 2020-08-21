@@ -78,7 +78,7 @@ socket2 = "0.3"
 pnet_packet = "0.26"
 
 [build-dependencies]
-tonic-build = { version = "0.2", default-features = false, features = ["transport", "prost"] }
+tonic-build = { version = "0.3.1", default-features = false, features = ["transport", "prost"] }
 
 
 [dev-dependencies]
