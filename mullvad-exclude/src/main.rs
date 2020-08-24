@@ -65,12 +65,12 @@ fn main() {
 
             std::process::exit(1);
         }
-        _ => unreachable!("execv returned unexpectedly"),
+        Ok(_) => unreachable!("execv returned unexpectedly"),
     }
 }
 
 #[cfg(target_os = "linux")]
-fn run() -> Result<void::Void, Error> {
+fn run() -> Result<std::convert::Infallible, Error> {
     let mut args_iter = env::args_os().skip(1);
     let program = args_iter.next().ok_or(Error::InvalidArguments)?;
     let program = CString::new(program.as_bytes()).map_err(Error::ArgumentNulError)?;

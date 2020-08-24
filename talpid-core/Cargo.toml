@@ -39,7 +39,7 @@ rand = "0.7"
 
 
 [target.'cfg(unix)'.dependencies]
-nix = "0.17"
+nix = "0.18"
 tokio-io = "0.1"
 
 
