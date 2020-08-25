@@ -31,6 +31,10 @@ Line wrap the file at 100 chars.                                              Th
 - Show a warning in the CLI if the provided location constraints don't match any known relay.
 
 ### Fixed
+- Disable "Always require VPN" automatically during uninstallation on Linux and macOS. This makes
+  sure the internet is not blocked after uninstall, and that WireGuard keys are removed from the
+  account on uninstall.
+
 #### Android
 - Fix possible crash when starting the app, caused by trying to use JNI functions before the library
   is loaded.
