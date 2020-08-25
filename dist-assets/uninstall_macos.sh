@@ -13,6 +13,8 @@ fi
 echo "Stopping GUI process ..."
 sudo pkill -x "Mullvad VPN" || echo "No GUI process found"
 
+mullvad always-require-vpn set off || echo "Failed to disable 'Always require VPN'"
+sleep 0.1
 mullvad account clear-history || echo "Failed to remove leftover WireGuard keys"
 
 echo "Stopping and unloading mullvad-daemon system daemon ..."

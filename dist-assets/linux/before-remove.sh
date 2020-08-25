@@ -14,6 +14,8 @@ if [[ "$1" == "upgrade" ]]; then
     exit 0;
 fi
 
+mullvad always-require-vpn set off || echo "Failed to disable 'Always require VPN'"
+sleep 0.1
 mullvad account clear-history || echo "Failed to remove leftover WireGuard keys"
 
 if which systemctl &> /dev/null; then
