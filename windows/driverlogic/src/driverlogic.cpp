@@ -504,7 +504,42 @@ std::set<NetworkAdapter> GetNetworkAdapters(const std::optional<std::wstring> ha
 	return adapters;
 }
 
-void CreateTapDevice()
+void throwUpdateException(DWORD lastError, const char *operation)
+{
+	if (ERROR_DEVICE_INSTALLER_NOT_READY == lastError)
+	{
+		bool deviceInstallDisabled = false;
+
+		try
+		{
+			const auto key = common::registry::Registry::OpenKey(
+				HKEY_LOCAL_MACHINE,
+				L"SYSTEM\\CurrentControlSet\\Services\\DeviceInstall\\Parameters"
+			);
+			deviceInstallDisabled = (0 != key->readUint32(L"DeviceInstallDisabled"));
+		}
+		catch (...)
+		{
+		}
+
+		if (deviceInstallDisabled)
+		{
+			throw common::error::WindowsException(
+				"Device installs must be enabled to continue. "
+				"Enable them in the Local Group Policy editor, or "
+				"update the registry value DeviceInstallDisabled in "
+				"[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\DeviceInstall\\Parameters]",
+				lastError
+			);
+		}
+	}
+
+	THROW_SETUPAPI_ERROR(lastError, operation);
+}
+
+void RenameAdapter(const std::wstring &guid, const std::wstring &baseName);
+
+void CreateNetDevice(const std::wstring &hardwareId, const std::optional<std::wstring> alias, bool installDeviceDriver)
 {
 	GUID classGuid = GUID_DEVCLASS_NET;
 
@@ -542,8 +577,8 @@ void CreateTapDevice()
 		deviceInfoSet,
 		&devInfoData,
 		SPDRP_HARDWAREID,
-		reinterpret_cast<const BYTE *>(TAP_HARDWARE_ID),
-		sizeof(TAP_HARDWARE_ID) - sizeof(L'\0')
+		reinterpret_cast<const BYTE *>(hardwareId.c_str()),
+		static_cast<DWORD>(sizeof(wchar_t) * hardwareId.size())
 	);
 
 	if (FALSE == status)
@@ -565,7 +600,37 @@ void CreateTapDevice()
 		THROW_SETUPAPI_ERROR(GetLastError(), "SetupDiCallClassInstaller");
 	}
 
-	Log(L"Created new TAP adapter successfully");
+	Log(L"Created new network adapter successfully");
+
+	if (installDeviceDriver)
+	{
+		BOOL rebootRequired = FALSE;
+
+		if (FALSE == DiInstallDevice(
+			nullptr,
+			deviceInfoSet,
+			&devInfoData,
+			nullptr,
+			0,
+			&rebootRequired
+		))
+		{
+			throwUpdateException(GetLastError(), "DiInstallDevice");
+		}
+
+		std::wstringstream ss;
+		ss << L"Installed driver on device. Reboot required: "
+			<< rebootRequired;
+		Log(ss.str());
+	}
+
+	if (alias.has_value())
+	{
+		RenameAdapter(
+			GetNetCfgInstanceId(deviceInfoSet, devInfoData),
+			alias.value()
+		);
+	}
 }
 
 void UpdateTapDriver(const std::wstring &infPath)
@@ -598,35 +663,7 @@ ATTEMPT_UPDATE:
 			goto ATTEMPT_UPDATE;
 		}
 
-		if (ERROR_DEVICE_INSTALLER_NOT_READY == lastError)
-		{
-			bool deviceInstallDisabled = false;
-
-			try
-			{
-				const auto key = common::registry::Registry::OpenKey(
-					HKEY_LOCAL_MACHINE,
-					L"SYSTEM\\CurrentControlSet\\Services\\DeviceInstall\\Parameters"
-				);
-				deviceInstallDisabled = (0 != key->readUint32(L"DeviceInstallDisabled"));
-			}
-			catch (...)
-			{
-			}
-
-			if (deviceInstallDisabled)
-			{
-				throw common::error::WindowsException(
-					"Device installs must be enabled to continue. "
-					"Enable them in the Local Group Policy editor, or "
-					"update the registry value DeviceInstallDisabled in "
-					"[HKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Services\\DeviceInstall\\Parameters]",
-					lastError
-				);
-			}
-		}
-
-		THROW_SETUPAPI_ERROR(lastError, "UpdateDriverForPlugAndPlayDevicesW");
+		throwUpdateException(lastError, "UpdateDriverForPlugAndPlayDevicesW");
 	}
 
 	//
@@ -644,13 +681,13 @@ ATTEMPT_UPDATE:
 // NOTE: Enumerating adapters first and picking the next free name is not sufficient,
 //       because the broken TAP may not be included.
 //
-void RenameAdapterToMullvad(const NetworkAdapter &adapter)
+void RenameAdapter(const std::wstring &guid, const std::wstring &baseName)
 {
 	common::network::Nci nci;
 
 	try
 	{
-		nci.setConnectionName(common::Guid::FromString(adapter.guid), TAP_BASE_ALIAS);
+		nci.setConnectionName(common::Guid::FromString(guid), baseName.c_str());
 		return;
 	}
 	catch (...)
@@ -660,11 +697,11 @@ void RenameAdapterToMullvad(const NetworkAdapter &adapter)
 	for (int i = 1; i < 10; i++)
 	{
 		std::wstringstream ss;
-		ss << TAP_BASE_ALIAS << L"-" << i;
+		ss << baseName << L"-" << i;
 
 		try
 		{
-			nci.setConnectionName(common::Guid::FromString(adapter.guid), ss.str().c_str());
+			nci.setConnectionName(common::Guid::FromString(guid), ss.str().c_str());
 			return;
 		}
 		catch (...)
@@ -672,10 +709,10 @@ void RenameAdapterToMullvad(const NetworkAdapter &adapter)
 		}
 	}
 
-	THROW_ERROR("Exhausted TAP adapter namespace");
+	THROW_ERROR("Unable to rename network adapter");
 }
 
-std::optional<NetworkAdapter> FindMullvadAdapter(const std::set<NetworkAdapter> &tapAdapters)
+std::optional<NetworkAdapter> FindAdapterByAlias(const std::set<NetworkAdapter> &tapAdapters, const std::wstring &baseName)
 {
 	if (tapAdapters.empty())
 	{
@@ -696,7 +733,7 @@ std::optional<NetworkAdapter> FindMullvadAdapter(const std::set<NetworkAdapter> 
 		return it;
 	};
 
-	const auto firstMullvadAdapter = findByAlias(tapAdapters, TAP_BASE_ALIAS);
+	const auto firstMullvadAdapter = findByAlias(tapAdapters, baseName);
 
 	if (tapAdapters.end() != firstMullvadAdapter)
 	{
@@ -711,7 +748,7 @@ std::optional<NetworkAdapter> FindMullvadAdapter(const std::set<NetworkAdapter> 
 	{
 		std::wstringstream ss;
 
-		ss << TAP_BASE_ALIAS << L"-" << i;
+		ss << baseName << L"-" << i;
 
 		const auto alias = ss.str();
 
@@ -726,22 +763,52 @@ std::optional<NetworkAdapter> FindMullvadAdapter(const std::set<NetworkAdapter> 
 	return std::nullopt;
 }
 
-NetworkAdapter FindBrandedTap()
+NetworkAdapter FindNetAdapter(const std::wstring &hardwareId)
 {
-	std::set<NetworkAdapter> added = GetNetworkAdapters(TAP_HARDWARE_ID);
+	std::set<NetworkAdapter> added = GetNetworkAdapters(hardwareId);
 
 	if (added.empty())
 	{
-		THROW_ERROR("Could not identify TAP");
+		THROW_ERROR("Could not identify virtual network adapter");
 	}
 	else if (added.size() > 1)
 	{
-		LogAdapters(L"Enumerable network TAP adapters", added);
+		LogAdapters(L"Enumerable virtual network adapters", added);
 
-		THROW_ERROR("Identified more TAP adapters than expected");
+		THROW_ERROR("Identified more network adapters than expected");
 	}
 
 	return *added.begin();
+}
+
+bool RemoveNetDevice(const std::wstring &tapHardwareId, const std::wstring &guid)
+{
+	bool deletedAdapter = false;
+
+	ForEachNetworkDevice(tapHardwareId, [&](HDEVINFO devInfo, const SP_DEVINFO_DATA &devInfoData) {
+		try
+		{
+			if (0 == GetNetCfgInstanceId(devInfo, devInfoData).compare(guid))
+			{
+				deletedAdapter = DeleteDevice(devInfo, devInfoData);
+				return false;
+			}
+		}
+		catch (const std::exception & e)
+		{
+			//
+			// Skip this adapter
+			//
+
+			std::wstringstream ss;
+			ss << L"Skipping virtual adapter due to exception caught while iterating: "
+				<< common::string::ToWide(e.what());
+			LogError(ss.str());
+		}
+		return true;
+	});
+
+	return deletedAdapter;
 }
 
 void RemoveTapDriver(const std::wstring &tapHardwareId)
@@ -766,50 +833,26 @@ void RemoveTapDriver(const std::wstring &tapHardwareId)
 	});
 }
 
-void DeleteVanillaMullvadAdapter()
+void RemoveNetAdapterByAlias(const std::wstring &hardwareId, const std::wstring &baseName)
 {
-	auto tapAdapters = GetNetworkAdapters(DEPRECATED_TAP_HARDWARE_ID);
-	std::optional<NetworkAdapter> mullvadAdapter = FindMullvadAdapter(tapAdapters);
+	auto tapAdapters = GetNetworkAdapters(hardwareId);
+	std::optional<NetworkAdapter> adapter = FindAdapterByAlias(tapAdapters, baseName);
 
-	if (!mullvadAdapter.has_value())
+	if (!adapter.has_value())
 	{
 		return;
 	}
 
-	const auto mullvadGuid = mullvadAdapter.value().guid;
-	bool deletedAdapter = false;
+	const auto guid = adapter.value().guid;
 
 	//
-	// Enumerate over all network devices with the hardware ID DEPRECATED_TAP_HARDWARE_ID,
+	// Enumerate over all network devices with the hardware ID,
 	// and delete any adapter whose GUID matches that of the "Mullvad" adapter.
 	//
 
-	ForEachNetworkDevice(DEPRECATED_TAP_HARDWARE_ID, [&](HDEVINFO devInfo, const SP_DEVINFO_DATA &devInfoData) {
-		try
-		{
-			if (0 == GetNetCfgInstanceId(devInfo, devInfoData).compare(mullvadGuid))
-			{
-				deletedAdapter = DeleteDevice(devInfo, devInfoData);
-				return false;
-			}
-		}
-		catch (const std::exception & e)
-		{
-			//
-			// Skip this adapter
-			//
-
-			std::wstringstream ss;
-			ss << L"Skipping TAP adapter due to exception caught while iterating: "
-				<< common::string::ToWide(e.what());
-			LogError(ss.str());
-		}
-		return true;
-	});
-
-	if (!deletedAdapter)
+	if (!RemoveNetDevice(hardwareId, guid))
 	{
-		THROW_ERROR("The TAP adapter could not be removed");
+		THROW_ERROR("The virtual adapter could not be removed");
 	}
 }
 
@@ -837,9 +880,9 @@ int wmain(int argc, const wchar_t * argv[], const wchar_t * [])
 				goto INVALID_ARGUMENTS;
 			}
 
-			CreateTapDevice();
+			CreateNetDevice(TAP_HARDWARE_ID, std::nullopt, false);
 			UpdateTapDriver(argv[2]);
-			RenameAdapterToMullvad(FindBrandedTap());
+			RenameAdapter(FindNetAdapter(TAP_HARDWARE_ID).guid, TAP_BASE_ALIAS);
 		}
 		else if (0 == _wcsicmp(argv[1], L"update"))
 		{
@@ -861,7 +904,7 @@ int wmain(int argc, const wchar_t * argv[], const wchar_t * [])
 		}
 		else if (0 == _wcsicmp(argv[1], L"remove-vanilla-tap"))
 		{
-			DeleteVanillaMullvadAdapter();
+			RemoveNetAdapterByAlias(DEPRECATED_TAP_HARDWARE_ID, TAP_BASE_ALIAS);
 		}
 		else
 		{
