@@ -102,6 +102,7 @@ impl Firewall {
             } => {
                 let mut rules = vec![self.get_allow_relay_rule(peer_endpoint)?];
                 rules.extend(self.get_allow_pingable_hosts(&pingable_hosts)?);
+                rules.extend(self.get_allow_apple_rules()?);
                 if allow_lan {
                     // Important to block DNS after allow relay rule (so the relay can operate
                     // over port 53) but before allow LAN (so DNS does not leak to the LAN)
@@ -167,6 +168,7 @@ impl Firewall {
                 rules.append(&mut self.get_block_dns_rules()?);
 
                 rules.push(self.get_allow_tunnel_rule(tunnel.interface.as_str())?);
+                rules.extend(self.get_allow_apple_rules()?);
 
                 if allow_lan {
                     rules.append(&mut self.get_allow_lan_rules()?);
@@ -175,7 +177,7 @@ impl Firewall {
                 Ok(rules)
             }
             FirewallPolicy::Blocked { allow_lan } => {
-                let mut rules = Vec::new();
+                let mut rules = self.get_allow_apple_rules()?;
                 if allow_lan {
                     // Important to block DNS before allow LAN (so DNS does not leak to the LAN)
                     rules.append(&mut self.get_block_dns_rules()?);
@@ -272,6 +274,22 @@ impl Firewall {
             .keep_state(pfctl::StatePolicy::Keep)
             .build()?;
         Ok(vec![lo0_rule])
+    }
+
+    fn get_allow_apple_rules(&self) -> Result<Vec<pfctl::FilterRule>> {
+        let apple_subnet = "17.0.0.0/8".parse::<IpNetwork>().unwrap();
+        let incoming_rule = self
+            .create_rule_builder(FilterRuleAction::Pass)
+            .quick(true)
+            .from(pfctl::Endpoint::new(apple_subnet, 0))
+            .build()?;
+        let outgoing_rule = self
+            .create_rule_builder(FilterRuleAction::Pass)
+            .quick(true)
+            .to(pfctl::Endpoint::new(apple_subnet, 0))
+            .build()?;
+
+        Ok(vec![incoming_rule, outgoing_rule])
     }
 
     fn get_allow_lan_rules(&self) -> Result<Vec<pfctl::FilterRule>> {
