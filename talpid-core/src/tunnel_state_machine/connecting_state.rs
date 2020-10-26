@@ -90,6 +90,7 @@ impl ConnectingState {
         parameters: TunnelParameters,
         log_dir: &Option<PathBuf>,
         resource_dir: &Path,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
         tun_provider: &mut TunProvider,
         route_manager: &mut RouteManager,
         retry_attempt: u32,
@@ -104,6 +105,8 @@ impl ConnectingState {
             log_dir,
             resource_dir,
             on_tunnel_event,
+            #[cfg(target_os = "android")]
+            custom_dns_servers,
             tun_provider,
             route_manager,
         )?;
@@ -385,6 +388,8 @@ impl TunnelState for ConnectingState {
                         tunnel_parameters,
                         &shared_values.log_dir,
                         &shared_values.resource_dir,
+                        #[cfg(target_os = "android")]
+                        shared_values.custom_dns.as_ref(),
                         &mut shared_values.tun_provider,
                         &mut shared_values.route_manager,
                         retry_attempt,

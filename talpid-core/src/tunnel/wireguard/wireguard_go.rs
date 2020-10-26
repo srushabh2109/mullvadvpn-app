@@ -60,6 +60,7 @@ impl WgGoTunnel {
         log_path: Option<&Path>,
         tun_provider: &mut TunProvider,
         routes: impl Iterator<Item = IpNetwork>,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
     ) -> Result<Self> {
         #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
         let (mut tunnel_device, tunnel_fd) = Self::get_tunnel(tun_provider, config, routes)?;

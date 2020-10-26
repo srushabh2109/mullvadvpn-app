@@ -149,6 +149,7 @@ impl TunnelMonitor {
         log_dir: &Option<PathBuf>,
         resource_dir: &Path,
         on_event: L,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
         tun_provider: &mut TunProvider,
         route_manager: &mut RouteManager,
     ) -> Result<Self>
@@ -170,6 +171,8 @@ impl TunnelMonitor {
                 &config,
                 log_file,
                 on_event,
+                #[cfg(target_os = "android")]
+                custom_dns_servers,
                 tun_provider,
                 route_manager,
             ),
@@ -200,6 +203,7 @@ impl TunnelMonitor {
         params: &wireguard_types::TunnelParameters,
         log: Option<PathBuf>,
         on_event: L,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
         tun_provider: &mut TunProvider,
         route_manager: &mut RouteManager,
     ) -> Result<Self>
@@ -211,6 +215,8 @@ impl TunnelMonitor {
             &config,
             log.as_ref().map(|p| p.as_path()),
             on_event,
+            #[cfg(target_os = "android")]
+            custom_dns_servers,
             tun_provider,
             route_manager,
         )?;

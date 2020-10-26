@@ -7,6 +7,8 @@ use crate::routing::{self, RequiredRoute};
 use lazy_static::lazy_static;
 #[cfg(target_os = "linux")]
 use std::env;
+#[cfg(target_os = "android")]
+use std::net::IpAddr;
 use std::{
     collections::HashSet,
     path::Path,
@@ -77,10 +79,18 @@ impl WireguardMonitor {
         config: &Config,
         log_path: Option<&Path>,
         on_event: F,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
         tun_provider: &mut TunProvider,
         route_manager: &mut routing::RouteManager,
     ) -> Result<WireguardMonitor> {
-        let tunnel = Self::open_tunnel(&config, log_path, tun_provider, route_manager)?;
+        let tunnel = Self::open_tunnel(
+            &config,
+            log_path,
+            #[cfg(target_os = "android")]
+            custom_dns_servers,
+            tun_provider,
+            route_manager,
+        )?;
         let iface_name = tunnel.get_interface_name().to_string();
 
         #[cfg(target_os = "linux")]
@@ -148,6 +158,7 @@ impl WireguardMonitor {
     fn open_tunnel(
         config: &Config,
         log_path: Option<&Path>,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
         tun_provider: &mut TunProvider,
         route_manager: &mut routing::RouteManager,
     ) -> Result<Box<dyn Tunnel>> {
@@ -193,6 +204,8 @@ impl WireguardMonitor {
             log_path,
             tun_provider,
             Self::get_tunnel_routes(config),
+            #[cfg(target_os = "android")]
+            custom_dns_servers,
         )?))
     }
 
