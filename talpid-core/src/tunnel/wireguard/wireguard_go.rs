@@ -63,7 +63,13 @@ impl WgGoTunnel {
         #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
     ) -> Result<Self> {
         #[cfg_attr(not(target_os = "android"), allow(unused_mut))]
-        let (mut tunnel_device, tunnel_fd) = Self::get_tunnel(tun_provider, config, routes)?;
+        let (mut tunnel_device, tunnel_fd) = Self::get_tunnel(
+            tun_provider,
+            config,
+            routes,
+            #[cfg(target_os = "android")]
+            custom_dns_servers,
+        )?;
         let interface_name: String = tunnel_device.interface_name().to_string();
         let wg_config_str = config.to_userspace_format();
         let logging_context = initialize_logging(log_path)
@@ -196,17 +202,35 @@ impl WgGoTunnel {
     }
 
     #[cfg(not(target_os = "windows"))]
-    fn create_tunnel_config(config: &Config, routes: impl Iterator<Item = IpNetwork>) -> TunConfig {
-        let mut dns_servers = vec![IpAddr::V4(config.ipv4_gateway)];
-        dns_servers.extend(config.ipv6_gateway.map(IpAddr::V6));
+    fn create_tunnel_config(
+        config: &Config,
+        routes: impl Iterator<Item = IpNetwork>,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
+    ) -> TunConfig {
+        #[cfg(not(target_os = "android"))]
+        let custom_dns_servers = None;
 
         TunConfig {
             addresses: config.tunnel.addresses.clone(),
-            dns_servers,
+            dns_servers: Self::collect_dns_servers(config, custom_dns_servers),
             routes: routes.collect(),
             #[cfg(target_os = "android")]
             required_routes: Self::create_required_routes(config),
             mtu: config.mtu,
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    fn collect_dns_servers(
+        config: &Config,
+        custom_dns_servers: Option<&Vec<IpAddr>>,
+    ) -> Vec<IpAddr> {
+        if let Some(dns_servers) = custom_dns_servers {
+            dns_servers.clone()
+        } else if let Some(ipv6_gateway) = config.ipv6_gateway {
+            vec![IpAddr::V4(config.ipv4_gateway), IpAddr::V6(ipv6_gateway)]
+        } else {
+            vec![IpAddr::V4(config.ipv4_gateway)]
         }
     }
 
@@ -251,9 +275,15 @@ impl WgGoTunnel {
         tun_provider: &mut TunProvider,
         config: &Config,
         routes: impl Iterator<Item = IpNetwork>,
+        #[cfg(target_os = "android")] custom_dns_servers: Option<&Vec<IpAddr>>,
     ) -> Result<(Tun, RawFd)> {
         let mut last_error = None;
-        let tunnel_config = Self::create_tunnel_config(config, routes);
+        let tunnel_config = Self::create_tunnel_config(
+            config,
+            routes,
+            #[cfg(target_os = "android")]
+            custom_dns_servers,
+        );
 
         for _ in 1..=MAX_PREPARE_TUN_ATTEMPTS {
             let tunnel_device = tun_provider
