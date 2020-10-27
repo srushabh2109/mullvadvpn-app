@@ -103,6 +103,7 @@ open class TalpidVpnService : VpnService() {
                 addRoute(route.address, route.prefixLength.toInt())
             }
 
+            android.util.Log.d("mullvad", "Excluding ${disallowedApps?.size ?: 0} apps from tunnel.")
             disallowedApps?.let { apps ->
                 for (app in apps) {
                     addDisallowedApplication(app)

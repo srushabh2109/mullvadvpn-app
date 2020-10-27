@@ -34,6 +34,7 @@ class SplitTunneling(context: Context) {
     init {
         if (appListFile.exists()) {
             excludedApps.addAll(appListFile.readLines())
+            android.util.Log.d("mullvad", "Loaded ${excludedApps.size} excluded apps.")
             update()
         }
     }
@@ -51,7 +52,9 @@ class SplitTunneling(context: Context) {
     }
 
     fun persist() {
+        android.util.Log.d("mullvad", "Persisting ${excludedApps.size} excluded apps...")
         appListFile.writeText(excludedApps.joinToString(separator = "\n"))
+        android.util.Log.d("mullvad", "Persisted")
     }
 
     private fun enabledChanged() {
