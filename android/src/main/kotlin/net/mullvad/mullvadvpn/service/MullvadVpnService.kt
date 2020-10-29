@@ -234,6 +234,11 @@ class MullvadVpnService : TalpidVpnService() {
             connectionProxy.reconnect()
         }
 
+        val customDns = CustomDns(daemon, settingsListener) {
+            markTunAsStale()
+            connectionProxy.reconnect()
+        }
+
         handlePendingAction(connectionProxy, settings)
 
         if (state == State.Running) {
@@ -241,6 +246,7 @@ class MullvadVpnService : TalpidVpnService() {
                 daemon,
                 connectionProxy,
                 connectivityListener,
+                customDns,
                 settingsListener,
                 splitTunneling
             )
