@@ -38,7 +38,9 @@ export async function getApplications(
     shortcuts = [...startMenuApplications, ...nonStartMenuApplications];
   }
 
-  return convertToSplitTunnelingApplications(shortcuts);
+  const applications = await convertToSplitTunnelingApplications(shortcuts);
+  const sortedApplications = applications.sort((a, b) => a.name.localeCompare(b.name));
+  return sortedApplications;
 }
 
 async function findAllLinks(path: string): Promise<string[]> {
