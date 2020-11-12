@@ -3,12 +3,20 @@ use super::{
     TunnelError, MULLVAD_INTERFACE_NAME,
 };
 use dbus::{
-    arg::{RefArg, Variant},
+    arg::{self, RefArg, Variant},
     blocking::{stdintf::org_freedesktop_dbus::Properties, BlockingSender, Connection, Proxy},
-    message::Message,
+    message::{MatchRule, Message},
     strings::Path,
 };
-use std::{collections::HashMap, net::IpAddr};
+use std::{
+    collections::HashMap,
+    net::IpAddr,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
+    time::{Duration, Instant},
+};
 
 const NM_BUS: &str = "org.freedesktop.NetworkManager";
 const NM_INTERFACE_SETTINGS: &str = "org.freedesktop.NetworkManager.Settings";
@@ -21,13 +29,20 @@ const NM_MANAGER_PATH: &str = "/org/freedesktop/NetworkManager";
 
 const NM_ADD_CONNECTION_VOLATILE: u32 = 0x2;
 
-const RPC_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(3);
+const RPC_TIMEOUT: std::time::Duration = Duration::from_secs(3);
 
 const DBUS_UNKNOWN_METHOD: &str = "org.freedesktop.DBus.Error.UnknownMethod";
 
 const MINIMUM_SUPPORTED_MAJOR_VERSION: u32 = 1;
 const MINIMUM_SUPPORTED_MINOR_VERSION: u32 = 16;
 
+
+const NM_DEVICE_STATE_IP_CHECK: u32 = 80;
+const NM_DEVICE_STATE_SECONDARY: u32 = 90;
+const NM_DEVICE_STATE_ACTIVATED: u32 = 100;
+const DEVICE_READY_TIMEOUT: Duration = Duration::from_secs(15);
+
+const NM_DEVICE_STATE_CHANGED: &'static str = "StateChanged";
 
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -54,6 +69,9 @@ pub enum Error {
 
     #[error(display = "Cannot obtain the tunnel interface index")]
     FindInterfaceIndex,
+
+    #[error(display = "Device inactive: {}", _0)]
+    DeviceNotReady(u32),
 }
 
 pub struct NetworkManagerTunnel {
@@ -78,10 +96,11 @@ impl NetworkManagerTunnel {
         let mut dbus_connection = Connection::new_system()
             .map_err(|error| WgKernelError::NetworkManager(Error::Dbus(error)))?;
         Self::ensure_nm_is_new_enough(&dbus_connection).map_err(WgKernelError::NetworkManager)?;
-        let tunnel = Some(
-            Self::create_wg_tunnel(&mut dbus_connection, config)
-                .map_err(WgKernelError::NetworkManager)?,
-        );
+        let tunnel = Self::create_wg_tunnel(&mut dbus_connection, config)
+            .map_err(WgKernelError::NetworkManager)?;
+        Self::wait_until_device_is_ready(&dbus_connection, &tunnel.device_path)
+            .map_err(WgKernelError::NetworkManager)?;
+
 
         tokio_handle.clone().block_on(async move {
             let netlink_connections = Handle::connect().await?;
@@ -91,7 +110,7 @@ impl NetworkManagerTunnel {
 
             Ok(NetworkManagerTunnel {
                 dbus_connection,
-                tunnel,
+                tunnel: Some(tunnel),
                 interface_index,
                 tokio_handle,
                 netlink_connections,
@@ -171,6 +190,7 @@ impl NetworkManagerTunnel {
             .get(NM_CONNECTION_ACTIVE, "Devices")
             .map_err(Error::Dbus)?;
         let device_path = device_paths.into_iter().next().ok_or(Error::NoDevice)?;
+
 
         Ok(WireguardTunnel {
             config_path,
@@ -325,6 +345,7 @@ impl NetworkManagerTunnel {
     }
 
     fn remove_config(&mut self) -> Result<()> {
+        log::error!("REMOVING CONFIG!!!!¡¡¡¡ _ {:?}", self.tunnel);
         if let Some(tunnel) = self.tunnel.take() {
             let deactivation_result: Result<()> =
                 Proxy::new(NM_BUS, NM_MANAGER_PATH, RPC_TIMEOUT, &self.dbus_connection)
@@ -350,6 +371,84 @@ impl NetworkManagerTunnel {
         }
         Ok(())
     }
+
+
+    fn wait_until_device_is_ready(connection: &Connection, device: &Path<'_>) -> Result<()> {
+        let device_state = Self::get_device_state(connection, device)?;
+
+        if !device_is_ready(device_state) {
+            let deadline = Instant::now() + DEVICE_READY_TIMEOUT;
+
+            let mut match_rule = MatchRule::new_signal(NM_DEVICE, NM_DEVICE_STATE_CHANGED);
+
+            match_rule.path = Some(device.clone().into_static());
+            let device_state = Arc::new(AtomicU32::new(device_state));
+
+            {
+                let shared_device_state = device_state.clone();
+                let device_matcher = connection
+                    .add_match(
+                        match_rule,
+                        move |state_change: DeviceStateChange, _connection, _message| {
+                            log::debug!("Received new tunnel state change: {:?}", state_change);
+                            let new_state = state_change.new_state;
+                            shared_device_state.store(new_state, Ordering::Release);
+                            true
+                        },
+                    )
+                    .map_err(Error::Dbus)?;
+                while Instant::now() < deadline
+                    && !device_is_ready(device_state.load(Ordering::Acquire))
+                {
+                    if let Err(err) = connection.process(RPC_TIMEOUT) {
+                        log::error!(
+                            "DBus connection failed while waiting for device to be ready: {}",
+                            err
+                        );
+                    }
+                }
+
+                if let Err(err) = connection.remove_match(device_matcher) {
+                    log::error!("Failed to remove match from DBus connection: {}", err);
+                }
+            }
+
+            let final_device_state = device_state.load(Ordering::Acquire);
+            if !device_is_ready(final_device_state) {
+                return Err(Error::DeviceNotReady(final_device_state));
+            }
+        }
+        Ok(())
+    }
+
+    fn get_device_state(dbus_connection: &Connection, device: &dbus::Path<'_>) -> Result<u32> {
+        dbus_connection
+            .with_proxy(NM_BUS, device, RPC_TIMEOUT)
+            .get(NM_DEVICE, "State")
+            .map_err(Error::Dbus)
+    }
+}
+
+#[derive(Debug)]
+struct DeviceStateChange {
+    new_state: u32,
+    old_state: u32,
+    reason: u32,
+}
+
+impl arg::ReadAll for DeviceStateChange {
+    fn read(i: &mut arg::Iter<'_>) -> std::result::Result<Self, arg::TypeMismatchError> {
+        Ok(DeviceStateChange {
+            new_state: i.read()?,
+            old_state: i.read()?,
+            reason: i.read()?,
+        })
+    }
+}
+
+impl dbus::message::SignalArgs for DeviceStateChange {
+    const NAME: &'static str = NM_DEVICE_STATE_CHANGED;
+    const INTERFACE: &'static str = NM_DEVICE;
 }
 
 impl Tunnel for NetworkManagerTunnel {
@@ -393,7 +492,18 @@ impl Tunnel for NetworkManagerTunnel {
     }
 }
 
+fn device_is_ready(device_state: u32) -> bool {
+    /// Any state above `NM_DEVICE_STATE_IP_CONFIG` is considered to be an OK state to change the
+    /// DNS config. For the enums, see https://developer.gnome.org/NetworkManager/stable/nm-dbus-types.html#NMDeviceState
+    const READY_STATES: [u32; 3] = [
+        NM_DEVICE_STATE_IP_CHECK,
+        NM_DEVICE_STATE_SECONDARY,
+        NM_DEVICE_STATE_ACTIVATED,
+    ];
+    READY_STATES.contains(&device_state)
+}
 
+#[derive(Debug)]
 struct WireguardTunnel {
     config_path: Path<'static>,
     connection_path: Path<'static>,
