@@ -5,7 +5,7 @@ use lazy_static::lazy_static;
 use libc;
 use nftnl::{
     self,
-    expr::{self, IcmpCode, Payload, RejectionType, Verdict},
+    expr::{self, IcmpCode, Payload, RejectionType, Verdict, Register},
     nft_expr, table, Batch, Chain, FinalizedBatch, ProtoFamily, Rule, Table,
 };
 use std::{
