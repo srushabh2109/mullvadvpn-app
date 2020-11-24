@@ -63,7 +63,7 @@ class ForegroundNotificationManager(
     private val tunnelState
         get() = tunnelStateEvents?.latestEvent ?: TunnelState.Disconnected()
 
-    private val shouldBeOnForeground
+    val shouldBeOnForeground
         get() = lockedToForeground || !(tunnelState is TunnelState.Disconnected)
 
     var onForeground = false

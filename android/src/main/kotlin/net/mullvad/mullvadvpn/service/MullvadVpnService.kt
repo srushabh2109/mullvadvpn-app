@@ -120,7 +120,7 @@ class MullvadVpnService : TalpidVpnService() {
                 pendingAction = PendingAction.Connect
             } else if (action == KEY_DISCONNECT_ACTION) {
                 pendingAction = PendingAction.Disconnect
-            } else if (action == KEY_QUIT_ACTION && !notificationManager.onForeground) {
+            } else if (action == KEY_QUIT_ACTION && !notificationManager.shouldBeOnForeground) {
                 quitCommand = true
                 stop()
             }
