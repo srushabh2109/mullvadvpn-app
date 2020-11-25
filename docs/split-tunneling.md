@@ -12,7 +12,7 @@ One reason for this is that on most operating systems programs call some system 
 for name resolution, this system service will then perform the actual DNS lookup.
 Since all DNS requests then originate from the same process/system service, it becomes hard
 to know which ones are for excluded apps and not.
-
+q
 * **In tunnel** - DNS requests are sent in the VPN tunnel. Firewall rules ensure they
     are not allowed outside the tunnel.
 * **Outside tunnel** - DNS requests are sent outside the VPN tunnel. Firewall rules ensure
@@ -47,3 +47,11 @@ local DNS resolver is in use the requests will go there and that resolver in tur
 send requests in the tunnel.
 
 ### Android
+
+| In-app DNS setting | Normal app | Excluded app |
+|-|-|-|
+| **Default DNS** | In tunnel (to relay) | Outside tunnel (to relay??? Will not work) |
+| **Private custom DNS** (e.g. 10.0.1.1) | LAN\[2\] (to 10.0.1.1) | LAN\[2\] (to 10.0.1.1) |
+| **Public custom DNS** (e.g. 8.8.8.8) | In tunnel (to 8.8.8.8) | Outside tunnel (to 8.8.8.8) |
+
+\[2\]: The "Local network sharing" option must be enabled to actually allow access to these IPs.
