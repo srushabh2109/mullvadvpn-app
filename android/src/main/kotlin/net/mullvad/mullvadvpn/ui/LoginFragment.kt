@@ -93,11 +93,21 @@ class LoginFragment : ServiceDependentFragment(OnNoService.GoToLaunchScreen) {
                 accountLogin.accountHistory = history
             }
         }
+
+        parentActivity.backButtonHandler = {
+            if (accountLogin.hasFocus) {
+                background.requestFocus()
+                true
+            } else {
+                false
+            }
+        }
     }
 
     override fun onSafelyStop() {
         jobTracker.cancelJob("advanceToNextScreen")
         accountCache.onAccountHistoryChange.unsubscribe(this)
+        parentActivity.backButtonHandler = null
     }
 
     private fun scrollToShow(view: View) {
