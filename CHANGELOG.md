@@ -38,6 +38,9 @@ Line wrap the file at 100 chars.                                              Th
 - Disable NetworkManager's connectivity check before applying firewall rules to avoid triggerring
   NetworkManager's [bug](https://gitlab.freedesktop.org/NetworkManager/NetworkManager/-/issues/312#note_453724)
 
+#### Android
+- Add a screen to view the logs included in a problem report.
+
 ### Changed
 - Use the API to fetch API IP addresses instead of DNS.
 - Remove WireGuard keys during uninstallation after the firewall is unlocked.
